@@ -282,6 +282,44 @@ def test_module_load(test, device):
     test.assertEqual(hash1, hash2)
 
 
+def make_tile_map_kernel(k):
+    @wp.func
+    def add_k(x: int) -> int:
+        return x + k
+
+    @wp.kernel(module="unique")
+    def tile_map_kernel(a: wp.array[int], out: wp.array[int]):
+        wp.tile_store(out, wp.tile_map(add_k, wp.tile_load(a, shape=4)))
+
+    return tile_map_kernel
+
+
+def make_tile_reduce_kernel(k):
+    @wp.func
+    def max_k(x: int, y: int) -> int:
+        return wp.max(wp.max(x, y), k)
+
+    @wp.kernel(module="unique")
+    def tile_reduce_kernel(a: wp.array[int], out: wp.array[int]):
+        wp.tile_store(out, wp.tile_reduce(max_k, wp.tile_load(a, shape=4)))
+
+    return tile_reduce_kernel
+
+
+def test_builtin_function_argument_hashing(test, device):
+    """Verify functions passed to builtins such as ``wp.tile_map()`` are part of the module hash."""
+    a = wp.array([0, 1, 2, 3], dtype=int, device=device)
+
+    for k in (5, 7):
+        out = wp.zeros(4, dtype=int, device=device)
+        wp.launch_tiled(make_tile_map_kernel(k), dim=1, inputs=[a], outputs=[out], block_dim=32, device=device)
+        test.assertEqual(out.numpy().tolist(), [i + k for i in range(4)])
+
+        out = wp.zeros(1, dtype=int, device=device)
+        wp.launch_tiled(make_tile_reduce_kernel(k), dim=1, inputs=[a], outputs=[out], block_dim=32, device=device)
+        test.assertEqual(out.numpy()[0], k)
+
+
 class TestOptionResolution(unittest.TestCase):
     """Tests for centralized option resolution."""
 
@@ -585,6 +623,12 @@ devices = get_test_devices()
 add_function_test(TestModuleHashing, "test_function_overload_hashing", test_function_overload_hashing)
 add_function_test(TestModuleHashing, "test_function_generic_overload_hashing", test_function_generic_overload_hashing)
 add_function_test(TestModuleHashing, "test_module_load", test_module_load, devices=devices)
+add_function_test(
+    TestModuleHashing,
+    "test_builtin_function_argument_hashing",
+    test_builtin_function_argument_hashing,
+    devices=devices,
+)
 
 
 if __name__ == "__main__":

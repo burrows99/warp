@@ -4653,7 +4653,7 @@ class Module:
                     if isinstance(func, warp._src.context.Function) and func.module is not None:
                         add_ref(func.module)
 
-                    if isinstance(func, warp._src.context.Function) and not func.is_builtin():
+                    if isinstance(func, warp._src.context.Function):
                         # Function targets can come from arguments or defaults;
                         # either way their modules must invalidate this module.
                         for callable_func in warp._src.codegen.iter_call_callable_arg_targets(
