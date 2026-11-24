@@ -2382,7 +2382,9 @@ class Adjoint:
 
         So: parse + target-function validation success ⟹ correct slice; parse or
         validation failure ⟹ fallback. The slow path is also parsed; if *that*
-        fails, the function itself has a syntax error and we let it propagate.
+        fails, the function itself has a syntax error and we let it propagate. The
+        slow path reads the file as it is now, so if its result does not define the
+        target function, the file changed since import and ``RuntimeError`` is raised.
         """
         try:
             code = inspect.unwrap(func).__code__
@@ -2406,7 +2408,20 @@ class Adjoint:
                         return dedented, fast_lineno, tree
         source, fun_lineno = Adjoint._inspect_extract_function_source(func)
         dedented = textwrap.dedent(source)
-        return dedented, fun_lineno, ast.parse(dedented)
+        tree = ast.parse(dedented)
+        # inspect reads the file as it is now. If the file changed since the function was
+        # imported, the source it finds may belong to another function, so check it.
+        if code is not None and not (
+            tree.body
+            and isinstance(tree.body[0], (ast.FunctionDef, ast.AsyncFunctionDef))
+            and tree.body[0].name == code.co_name
+        ):
+            raise RuntimeError(
+                f"Could not find the source of '{code.co_name}' at line {code.co_firstlineno} of "
+                f"'{code.co_filename}'. The file may have changed since it was imported; "
+                "reload the module or restart Python to use the new source."
+            )
+        return dedented, fun_lineno, tree
 
     @staticmethod
     def _inspect_extract_function_source(func: Callable) -> tuple[str, int]:

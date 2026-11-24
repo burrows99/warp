@@ -2241,9 +2241,12 @@ class TestCodeGen(unittest.TestCase):
         """
         slow_source = "def generated():\n    return 42\n"
 
+        def generated():
+            return 42
+
         with mock.patch.object(codegen.Adjoint, "_try_extract_function_source", return_value=None):
             with mock.patch.object(codegen.inspect, "getsourcelines", return_value=([slow_source], 123)) as get_lines:
-                source, lineno, tree = codegen.Adjoint.extract_function_source(lambda: None)
+                source, lineno, tree = codegen.Adjoint.extract_function_source(generated)
 
         self.assertEqual(source, slow_source)  # already at column 0; dedent is a no-op
         self.assertEqual(lineno, 123)
@@ -2408,6 +2411,31 @@ class TestCodeGen(unittest.TestCase):
                 self.assertIn(type(tree.body[0]), (ast.FunctionDef, ast.AsyncFunctionDef))
                 self.assertEqual(tree.body[0].name, "line_shifted")
                 slow_extract.assert_called_once_with(shifted_func)
+            finally:
+                linecache.cache.pop(path, None)
+
+    def test_extract_function_source_rejects_another_function_after_file_change(self):
+        """Raise instead of returning another function's source when the file changed after import.
+
+        Once a function's ``def`` line holds another function, both extraction paths must not
+        return that function's source under this function's name (GH-2367).
+        """
+        source_before = "def fill_one(a):\n    a[0] = 1.0\n\ndef fill_two(a):\n    a[0] = 2.0\n"
+        source_after = "def fill_two(a):\n    a[0] = 2.0\n\ndef fill_one(a):\n    a[0] = 1.0\n"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "changed_after_import_fixture.py")
+            try:
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(source_before)
+                namespace = {"__file__": path, "__name__": "changed_after_import_fixture"}
+                exec(compile(source_before, path, "exec"), namespace)
+
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(source_after)
+
+                with self.assertRaisesRegex(RuntimeError, "Could not find the source of 'fill_two' at line 4"):
+                    codegen.Adjoint.extract_function_source(namespace["fill_two"])
             finally:
                 linecache.cache.pop(path, None)
 
